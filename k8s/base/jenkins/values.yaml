@@ -1,0 +1,231 @@
+# Jenkins Component Values
+
+controller:
+  # Service configuration
+  serviceType: ClusterIP
+  servicePort: 8080
+  targetPort: 8080
+  
+  # High Availability configuration
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  # Resource configuration
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "1000m"
+      memory: "2Gi"
+
+  # Persistence configuration
+  persistence:
+    enabled: true
+    # Size and storage class will be overridden by environment
+    size: 8Gi
+    storageClass: standard
+    accessMode: ReadWriteOnce
+
+  # Security context
+  securityContext:
+    runAsUser: 1000
+    fsGroup: 1000
+
+  # Jenkins configuration
+  installPlugins:
+    - kubernetes:latest
+    - job-dsl:latest
+    - workflow-aggregator:latest
+  JCasC:
+    configScripts:
+      seed-job: |
+        jobs:
+          - script: >
+              new File('/var/jenkins_home/jobs/seed-job.groovy').eachLine { line -> evaluate(line) }
+  additionalConfigMaps:
+    - name: jenkins-job-dsl-scripts
+      mountPath: /var/jenkins_home/jobs/
+  credentials:
+    - type: usernamePassword
+      id: db-creds
+      description: "PostgreSQL credentials (from Vault via ESO)"
+      usernameSecret: jenkins-db-credentials
+      usernameSecretKey: username
+      passwordSecret: jenkins-db-credentials
+      passwordSecretKey: password
+    - type: secretText
+      id: db-name
+      description: "PostgreSQL database name (from Vault via ESO)"
+      secretName: jenkins-db-credentials
+      secretKey: database
+
+  # Jenkins system configuration
+  systemMessage: "Jenkins configured automatically by Helm"
+  numExecutors: 0  # We'll use Kubernetes agents instead
+
+  # Kubernetes plugin configuration
+  kubernetes:
+    enabled: true
+    namespace: jenkins-workers
+    jenkinsUrl: http://jenkins:8080
+    jenkinsTunnel: jenkins-agent:50000
+    containerCapStr: "10"
+    maxRequestsPerHostStr: "32"
+    retentionTimeout: 5
+    connectTimeout: 5
+    readTimeout: 15
+
+  # Admin user configuration
+  adminUser: admin
+  adminPassword: ""  # Will be set from secret
+
+  # Additional secrets
+  additionalSecrets:
+    - name: jenkins-secret
+      key: jenkins-admin-password
+      secretName: jenkins-secret
+
+  # Health checks
+  livenessProbe:
+    httpGet:
+      path: /login
+      port: http
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+
+  readinessProbe:
+    httpGet:
+      path: /login
+      port: http
+    initialDelaySeconds: 60
+    periodSeconds: 10
+    timeoutSeconds: 5
+    failureThreshold: 3
+    successThreshold: 1
+
+  # Service account configuration
+  serviceAccount:
+    create: true
+    name: jenkins
+    annotations: {}
+
+  # Network policies
+  networkPolicy:
+    enabled: true
+    apiVersion: networking.k8s.io/v1
+    ingress:
+      - from:
+          - namespaceSelector:
+              matchLabels:
+                name: planescape
+        ports:
+          - protocol: TCP
+            port: 8080
+    egress:
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                name: jenkins-workers
+        ports:
+          - protocol: TCP
+            port: 50000
+      - to:
+          - namespaceSelector:
+              matchLabels:
+                name: planescape
+        ports:
+          - protocol: TCP
+            port: 5432
+
+  # Pod security context
+  podSecurityContext:
+    enabled: true
+    fsGroup: 1000
+    runAsUser: 1000
+    runAsNonRoot: true
+
+  # Container security context
+  containerSecurityContext:
+    enabled: true
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 1000
+    capabilities:
+      drop:
+        - ALL
+
+  # Labels and annotations
+  labels:
+    app: jenkins
+    component: ci-cd
+
+  annotations:
+    gitops/component: jenkins
+    gitops/managed-by: helm
+
+# Agent configuration
+agent:
+  enabled: true
+  resources:
+    requests:
+      cpu: "200m"
+      memory: "256Mi"
+    limits:
+      cpu: "500m"
+      memory: "512Mi"
+  serviceAccount:
+    create: true
+    name: jenkins-agent
+    annotations: {}
+
+  # Agent security context
+  securityContext:
+    runAsUser: 1000
+    fsGroup: 1000
+
+  # Agent pod security context
+  podSecurityContext:
+    enabled: true
+    fsGroup: 1000
+    runAsUser: 1000
+    runAsNonRoot: true
+
+  # Agent container security context
+  containerSecurityContext:
+    enabled: true
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 1000
+    capabilities:
+      drop:
+        - ALL
+
+# Backup configuration
+backup:
+  enabled: true
+  schedule: "0 0 * * *"  # Daily at midnight
+  retention: 7  # Keep backups for 7 days
+  storage:
+    size: 8Gi
+    storageClass: standard
+
+# Maintenance
+maintenance:
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: 1 

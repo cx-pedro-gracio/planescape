@@ -1,0 +1,26 @@
+# Secrets
+k8s/secrets/*.yaml
+!k8s/secrets/*.template
+
+# Environment files
+.env
+*.env
+
+# IDE files
+.idea/
+.vscode/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Kubernetes
+kubeconfig
+*.kubeconfig
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp 

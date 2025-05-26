@@ -1,0 +1,176 @@
+server:
+  dev:
+    enabled: false
+  standalone:
+    enabled: true
+  dataStorage:
+    enabled: true
+    size: 5Gi
+  service:
+    enabled: true
+    type: ClusterIP
+  ingress:
+    enabled: false
+  extraEnvironmentVars:
+    VAULT_ADDR: "http://0.0.0.0:8200"
+
+# Enable high availability mode
+ha:
+  enabled: true
+  replicas: 3
+
+# Configure service account
+serviceAccount:
+  create: true
+  name: vault
+  annotations:
+    eks.amazonaws.com/role-arn: ${VAULT_IAM_ROLE_ARN}  # For AWS, if needed
+
+# Configure Kubernetes auth
+extraEnvironmentVars:
+  VAULT_CACERT: /vault/userconfig/tls-ca/ca.crt
+  KUBE_CA_CERT: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+  KUBE_TOKEN_PATH: /var/run/secrets/kubernetes.io/serviceaccount/token
+
+# Configure service
+service:
+  enabled: true
+  type: ClusterIP
+  port: 8200
+
+# Configure ingress
+ingress:
+  enabled: true
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+  hosts:
+    - host: vault.local
+      paths:
+        - path: /
+          pathType: Prefix
+
+# Configure storage
+dataStorage:
+  enabled: true
+  size: 10Gi
+  storageClass: standard
+
+# Configure audit logging
+auditStorage:
+  enabled: true
+  size: 5Gi
+  storageClass: standard
+
+# Configure TLS
+tls:
+  enabled: true
+  secretName: vault-tls
+
+# Configure service accounts for components
+serviceAccounts:
+  postgres:
+    create: true
+    name: postgres-vault
+    annotations:
+      vault.hashicorp.com/role: postgres
+  jenkins:
+    create: true
+    name: jenkins-vault
+    annotations:
+      vault.hashicorp.com/role: jenkins
+
+# Configure Kubernetes auth
+authDelegator:
+  enabled: true
+  serviceAccount:
+    create: true
+    name: vault-auth
+
+# Configure auto-unseal (if using cloud provider)
+unsealer:
+  secretShares: 5
+  secretThreshold: 3
+  # Configure cloud auto-unseal if needed
+  # aws:
+  #   enabled: true
+  #   region: us-west-2
+  #   kmsKeyId: alias/vault-unseal
+
+# Configure UI
+ui:
+  enabled: true
+  serviceType: ClusterIP
+  serviceNodePort: null
+  externalPort: 8200
+
+# Configure metrics
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 10s
+    scrapeTimeout: 5s
+    namespace: monitoring
+    labels:
+      release: prometheus
+
+# Configure network policies
+networkPolicy:
+  enabled: true
+  ingress:
+    enabled: true
+    namespaceSelector:
+      matchLabels:
+        name: vault
+    podSelector:
+      matchLabels:
+        app.kubernetes.io/name: vault
+  egress:
+    enabled: true
+    namespaceSelector: {}
+    podSelector: {}
+
+# Configure pod security context
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 100
+  runAsGroup: 1000
+  fsGroup: 1000
+
+# Configure resource limits
+resources:
+  requests:
+    memory: "256Mi"
+    cpu: "250m"
+  limits:
+    memory: "512Mi"
+    cpu: "500m"
+
+# Configure liveness and readiness probes
+livenessProbe:
+  enabled: true
+  initialDelaySeconds: 60
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+  successThreshold: 1
+
+readinessProbe:
+  enabled: true
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+  successThreshold: 1
+
+# Configure startup probe
+startupProbe:
+  enabled: true
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 30
+  successThreshold: 1
+
+# NOTE: Vault initialization and unseal must be handled securely outside of GitOps (see documentation). 

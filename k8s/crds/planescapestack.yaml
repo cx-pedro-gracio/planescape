@@ -1,0 +1,317 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: planescapestacks.planescape.io
+spec:
+  group: planescape.io
+  names:
+    kind: PlanescapeStack
+    listKind: PlanescapeStackList
+    plural: planescapestacks
+    singular: planescapestack
+    shortNames:
+      - pstack
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          required:
+            - spec
+          properties:
+            spec:
+              type: object
+              required:
+                - components
+              properties:
+                components:
+                  type: object
+                  properties:
+                    postgresql:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                          default: false
+                          description: "Whether to deploy PostgreSQL"
+                        auth:
+                          type: object
+                          properties:
+                            database:
+                              type: string
+                              description: "Name of the database to create"
+                            username:
+                              type: string
+                              description: "Username for database access"
+                            password:
+                              type: string
+                              description: "Password for database access (will be stored in Vault)"
+                        primary:
+                          type: object
+                          properties:
+                            persistence:
+                              type: object
+                              properties:
+                                size:
+                                  type: string
+                                  pattern: '^([0-9]+)(Mi|Gi|Ti|Pi|Ki|M|G|T|P|K)?$'
+                                  description: "Size of the persistent volume"
+                            resources:
+                              type: object
+                              properties:
+                                requests:
+                                  type: object
+                                  properties:
+                                    cpu:
+                                      type: string
+                                      pattern: '^([0-9]+)(m)?$'
+                                    memory:
+                                      type: string
+                                      pattern: '^([0-9]+)(Mi|Gi|Ti|Pi|Ki|M|G|T|P|K)?$'
+                                limits:
+                                  type: object
+                                  properties:
+                                    cpu:
+                                      type: string
+                                      pattern: '^([0-9]+)(m)?$'
+                                    memory:
+                                      type: string
+                                      pattern: '^([0-9]+)(Mi|Gi|Ti|Pi|Ki|M|G|T|P|K)?$'
+                            service:
+                              type: object
+                              properties:
+                                type:
+                                  type: string
+                                  enum: [ClusterIP, NodePort, LoadBalancer]
+                                  default: ClusterIP
+                                port:
+                                  type: integer
+                                  minimum: 1
+                                  maximum: 65535
+                                  default: 5432
+                    jenkins:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                          default: false
+                          description: "Whether to deploy Jenkins"
+                        controller:
+                          type: object
+                          properties:
+                            resources:
+                              type: object
+                              properties:
+                                requests:
+                                  type: object
+                                  properties:
+                                    cpu:
+                                      type: string
+                                      pattern: '^([0-9]+)(m)?$'
+                                    memory:
+                                      type: string
+                                      pattern: '^([0-9]+)(Mi|Gi|Ti|Pi|Ki|M|G|T|P|K)?$'
+                                limits:
+                                  type: object
+                                  properties:
+                                    cpu:
+                                      type: string
+                                      pattern: '^([0-9]+)(m)?$'
+                                    memory:
+                                      type: string
+                                      pattern: '^([0-9]+)(Mi|Gi|Ti|Pi|Ki|M|G|T|P|K)?$'
+                            serviceType:
+                              type: string
+                              enum: [ClusterIP, NodePort, LoadBalancer]
+                              default: ClusterIP
+                            persistence:
+                              type: object
+                              properties:
+                                size:
+                                  type: string
+                                  pattern: '^([0-9]+)(Mi|Gi|Ti|Pi|Ki|M|G|T|P|K)?$'
+                            installPlugins:
+                              type: array
+                              items:
+                                type: string
+                                pattern: '^[a-zA-Z0-9-]+:[0-9]+\.[0-9]+(\.[0-9]+)?$'
+                            securityRealm:
+                              type: string
+                              description: "XML configuration for Jenkins security realm"
+                            authorizationStrategy:
+                              type: string
+                              description: "XML configuration for Jenkins authorization strategy"
+                    vault:
+                      type: object
+                      properties:
+                        enabled:
+                          type: boolean
+                          default: false
+                          description: "Whether to deploy Vault"
+                        server:
+                          type: object
+                          properties:
+                            ha:
+                              type: object
+                              properties:
+                                enabled:
+                                  type: boolean
+                                  default: false
+                                replicas:
+                                  type: integer
+                                  minimum: 1
+                                  maximum: 5
+                                  default: 3
+                            resources:
+                              type: object
+                              properties:
+                                requests:
+                                  type: object
+                                  properties:
+                                    cpu:
+                                      type: string
+                                      pattern: '^([0-9]+)(m)?$'
+                                    memory:
+                                      type: string
+                                      pattern: '^([0-9]+)(Mi|Gi|Ti|Pi|Ki|M|G|T|P|K)?$'
+                                limits:
+                                  type: object
+                                  properties:
+                                    cpu:
+                                      type: string
+                                      pattern: '^([0-9]+)(m)?$'
+                                    memory:
+                                      type: string
+                                      pattern: '^([0-9]+)(Mi|Gi|Ti|Pi|Ki|M|G|T|P|K)?$'
+                            service:
+                              type: object
+                              properties:
+                                type:
+                                  type: string
+                                  enum: [ClusterIP, NodePort, LoadBalancer]
+                                  default: ClusterIP
+                            dataStorage:
+                              type: object
+                              properties:
+                                size:
+                                  type: string
+                                  pattern: '^([0-9]+)(Mi|Gi|Ti|Pi|Ki|M|G|T|P|K)?$'
+                            auditStorage:
+                              type: object
+                              properties:
+                                size:
+                                  type: string
+                                  pattern: '^([0-9]+)(Mi|Gi|Ti|Pi|Ki|M|G|T|P|K)?$'
+                            dev:
+                              type: object
+                              properties:
+                                enabled:
+                                  type: boolean
+                                  default: false
+                            policies:
+                              type: object
+                              additionalProperties:
+                                type: object
+                                properties:
+                                  rules:
+                                    type: string
+                            roles:
+                              type: object
+                              additionalProperties:
+                                type: object
+                                required:
+                                  - bound_service_account_names
+                                  - bound_service_account_namespaces
+                                  - policies
+                                properties:
+                                  bound_service_account_names:
+                                    type: array
+                                    items:
+                                      type: string
+                                  bound_service_account_namespaces:
+                                    type: array
+                                    items:
+                                      type: string
+                                  policies:
+                                    type: array
+                                    items:
+                                      type: string
+                                  ttl:
+                                    type: string
+                                    pattern: '^([0-9]+)(h|m|s)?$'
+            status:
+              type: object
+              properties:
+                components:
+                  type: object
+                  properties:
+                    postgresql:
+                      type: object
+                      properties:
+                        state:
+                          type: string
+                          enum: [Pending, Running, Failed, Unknown]
+                        message:
+                          type: string
+                        lastUpdated:
+                          type: string
+                          format: date-time
+                    jenkins:
+                      type: object
+                      properties:
+                        state:
+                          type: string
+                          enum: [Pending, Running, Failed, Unknown]
+                        message:
+                          type: string
+                        lastUpdated:
+                          type: string
+                          format: date-time
+                    vault:
+                      type: object
+                      properties:
+                        state:
+                          type: string
+                          enum: [Pending, Running, Failed, Unknown]
+                        message:
+                          type: string
+                        lastUpdated:
+                          type: string
+                          format: date-time
+                conditions:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - type
+                      - status
+                    properties:
+                      type:
+                        type: string
+                      status:
+                        type: string
+                      lastTransitionTime:
+                        type: string
+                        format: date-time
+                      reason:
+                        type: string
+                      message:
+                        type: string
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: PostgreSQL
+          type: string
+          jsonPath: .status.components.postgresql.state
+        - name: Jenkins
+          type: string
+          jsonPath: .status.components.jenkins.state
+        - name: Vault
+          type: string
+          jsonPath: .status.components.vault.state
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp 

@@ -1,0 +1,248 @@
+# Local development configuration for Planescape Operator
+# This configuration is optimized for local development and testing
+
+# Basic configuration
+image:
+  repository: planescape-operator
+  tag: dev
+  pullPolicy: IfNotPresent
+
+# Resource configuration - Lower limits for local development
+resources:
+  limits:
+    cpu: 100m
+    memory: 128Mi
+  requests:
+    cpu: 50m
+    memory: 64Mi
+
+# Metrics configuration - Disabled by default in local
+metrics:
+  enabled: false
+  serviceMonitor:
+    enabled: false
+
+# Stack configuration for local development
+stack:
+  # Default namespace for stack components
+  defaultNamespace: planescape
+  # Default Helm chart repositories
+  helmRepos:
+    - name: bitnami
+      url: https://charts.bitnami.com/bitnami
+    - name: jenkins
+      url: https://charts.jenkins.io
+    - name: hashicorp
+      url: https://helm.releases.hashicorp.com
+  # Default values for stack components - Optimized for local
+  defaults:
+    # Common resource configurations - Smaller for local
+    resources:
+      small:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          cpu: 100m
+          memory: 256Mi
+      medium:
+        requests:
+          cpu: 200m
+          memory: 512Mi
+        limits:
+          cpu: 500m
+          memory: 1Gi
+      large:
+        requests:
+          cpu: 500m
+          memory: 1Gi
+        limits:
+          cpu: 1000m
+          memory: 2Gi
+    # Common persistence configurations - Smaller for local
+    persistence:
+      small: 1Gi
+      medium: 5Gi
+      large: 10Gi
+    # Component-specific configurations
+    postgresql:
+      auth:
+        database: planescape
+        username: postgres
+        # Remove existingSecret as Vault will manage credentials
+        vault:
+          enabled: true
+          role: postgresql
+          mountPath: database
+          dbName: planescape
+      primary:
+        # Add Vault agent configuration
+        vaultAgent:
+          enabled: true
+          annotations:
+            vault.hashicorp.com/agent-inject: "true"
+            vault.hashicorp.com/agent-inject-secret-db-creds: "database/creds/postgresql"
+            vault.hashicorp.com/role: "postgresql"
+            vault.hashicorp.com/agent-inject-template-db-creds: |
+              {{- with secret "database/creds/postgresql" -}}
+              export POSTGRES_USER="{{ .Data.username }}"
+              export POSTGRES_PASSWORD="{{ .Data.password }}"
+              {{- end -}}
+        persistence:
+          size: 5Gi
+        resources: 
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+        service:
+          type: ClusterIP
+        # Local-specific settings
+        extraEnvVars:
+          POSTGRESQL_INITDB_ARGS: "--auth-host=md5"
+          POSTGRESQL_HOST_AUTH_METHOD: "md5"
+    jenkins:
+      controller:
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+        serviceType: ClusterIP
+        persistence:
+          size: 5Gi  # Using medium persistence
+        # Local-specific settings
+        installPlugins:
+          - kubernetes:1.31.3
+          - workflow-aggregator:2.6
+          - git:4.11.0
+          - configuration-as-code:1.55
+        # Disable security for local development
+        securityRealm: |
+          <securityRealm class="hudson.security.HudsonPrivateSecurityRealm">
+            <disableSignup>false</disableSignup>
+            <enableCapstone>false</enableCapstone>
+          </securityRealm>
+        authorizationStrategy: |
+          <authorizationStrategy class="hudson.security.AuthorizationStrategy$Unsecured"/>
+        # Local-specific environment variables
+        extraEnvVars:
+          JENKINS_OPTS: "--httpPort=8080"
+          JAVA_OPTS: "-Xmx512m -Xms256m"
+    vault:
+      server:
+        # Disable HA for local development
+        ha:
+          enabled: false
+          replicas: 1
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 500m
+            memory: 1Gi
+        service:
+          type: ClusterIP
+        dataStorage:
+          size: 5Gi  # Using medium persistence
+        auditStorage:
+          size: 1Gi  # Using small persistence
+        # Local-specific Vault configurations
+        dev:
+          enabled: true  # Enable dev mode for local development
+        # Disable TLS for local development
+        extraEnvironmentVars:
+          VAULT_DEV_ROOT_TOKEN_ID: "root"
+          VAULT_DEV_LISTEN_ADDRESS: "0.0.0.0:8200"
+        # Simplified Vault policies for local
+        policies:
+          jenkins:
+            rules: |
+              path "secret/data/jenkins/*" {
+                capabilities = ["create", "read", "update", "delete", "list"]
+              }
+          postgresql:
+            rules: |
+              path "secret/data/postgresql/*" {
+                capabilities = ["create", "read", "update", "delete", "list"]
+              }
+        # Vault roles configuration
+        roles:
+          postgresql:
+            # Kubernetes auth configuration
+            bound_service_account_names: ["postgresql"]
+            bound_service_account_namespaces: ["planescape"]
+            token_policies: ["postgresql"]
+            token_ttl: "24h"
+            token_max_ttl: "24h"
+            # Database role configuration
+            db_role:
+              db_name: postgresql
+              creation_statements:
+                - "CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}';"
+                - "GRANT ALL PRIVILEGES ON DATABASE planescape TO \"{{name}}\";"
+              revocation_statements:
+                - "REVOKE ALL PRIVILEGES ON DATABASE planescape FROM \"{{name}}\";"
+                - "DROP ROLE IF EXISTS \"{{name}}\";"
+              default_ttl: "1h"
+              max_ttl: "24h"
+        # Database secrets engine configuration
+        secretsEngines:
+          database:
+            enabled: true
+            config:
+              postgresql:
+                plugin_name: postgresql-database-plugin
+                allowed_roles: ["postgresql"]
+                connection_url: "postgresql://{{username}}:{{password}}@postgresql:5432/postgres?sslmode=disable"
+                username: "postgres"
+                password: "postgres"  # Initial admin password, will be rotated
+                max_open_connections: 5
+                max_idle_connections: 5
+                max_connection_lifetime: "0s"
+
+# Local development specific settings
+development:
+  # Enable debug logging
+  logLevel: debug
+  # Disable security features for local development
+  security:
+    rbac:
+      create: true
+      # Minimal RBAC for local development
+      rules:
+        - apiGroups: [""]
+          resources: ["pods", "services", "configmaps", "secrets"]
+          verbs: ["*"]
+        - apiGroups: ["batch"]
+          resources: ["jobs", "cronjobs"]
+          verbs: ["*"]
+        - apiGroups: ["planescape.io"]
+          resources: ["planescapejobs", "planescapestacks"]
+          verbs: ["*"]
+    # Disable network policies for local
+    networkPolicies:
+      enabled: false
+  # Local development tools
+  tools:
+    # Enable port forwarding for local access
+    portForwarding:
+      enabled: true
+      ports:
+        - name: operator
+          port: 8000
+          targetPort: 8000
+        - name: jenkins
+          port: 8080
+          targetPort: 8080
+        - name: vault
+          port: 8200
+          targetPort: 8200
+        - name: postgresql
+          port: 5432
+          targetPort: 5432 

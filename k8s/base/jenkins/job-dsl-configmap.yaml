@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: jenkins-job-dsl-scripts
+  namespace: planescape
+data:
+  seed-job.groovy: |-
+    {{ .Files.Get "jobs/seed-job.groovy" | indent 4 }}
+  timestamp-job.groovy: |-
+    {{ .Files.Get "jobs/timestamp-job.groovy" | indent 4 }} 
