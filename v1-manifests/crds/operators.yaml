@@ -1,0 +1,208 @@
+# CloudNativePG Operator CRD
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: clusters.postgresql.cnpg.io
+spec:
+  group: postgresql.cnpg.io
+  names:
+    kind: Cluster
+    listKind: ClusterList
+    plural: clusters
+    singular: cluster
+    shortNames:
+      - pg
+      - pgc
+  scope: Namespaced
+  versions:
+    - name: v1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                instances:
+                  type: integer
+                  minimum: 1
+                storage:
+                  type: object
+                  properties:
+                    size:
+                      type: string
+                bootstrap:
+                  type: object
+                  properties:
+                    initdb:
+                      type: object
+                      properties:
+                        database:
+                          type: string
+                        owner:
+                          type: string
+                externalClusters:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      name:
+                        type: string
+                      barmanObjectStore:
+                        type: object
+                        properties:
+                          destinationPath:
+                            type: string
+                          s3Credentials:
+                            type: object
+                            properties:
+                              accessKeyId:
+                                type: object
+                                properties:
+                                  name:
+                                    type: string
+                                  key:
+                                    type: string
+                              secretAccessKey:
+                                type: object
+                                properties:
+                                  name:
+                                    type: string
+                                  key:
+                                    type: string
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Instances
+          type: integer
+          jsonPath: .spec.instances
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+---
+# Jenkins Operator CRD
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: jenkins.jenkins.io
+spec:
+  group: jenkins.io
+  names:
+    kind: Jenkins
+    listKind: JenkinsList
+    plural: jenkins
+    singular: jenkins
+  scope: Namespaced
+  versions:
+    - name: v1alpha2
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                serviceType:
+                  type: string
+                  enum: [ClusterIP, NodePort, LoadBalancer]
+                storage:
+                  type: object
+                  properties:
+                    size:
+                      type: string
+                plugins:
+                  type: array
+                  items:
+                    type: string
+                securityRealm:
+                  type: string
+                authorizationStrategy:
+                  type: string
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Service Type
+          type: string
+          jsonPath: .spec.serviceType
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+---
+# Vault Operator CRD
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: vaultservers.vault.banzaicloud.com
+spec:
+  group: vault.banzaicloud.com
+  names:
+    kind: VaultServer
+    listKind: VaultServerList
+    plural: vaultservers
+    singular: vaultserver
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                ha:
+                  type: object
+                  properties:
+                    enabled:
+                      type: boolean
+                    replicas:
+                      type: integer
+                      minimum: 1
+                resources:
+                  type: object
+                  properties:
+                    limits:
+                      type: object
+                      properties:
+                        cpu:
+                          type: string
+                        memory:
+                          type: string
+                    requests:
+                      type: object
+                      properties:
+                        cpu:
+                          type: string
+                        memory:
+                          type: string
+                service:
+                  type: object
+                  properties:
+                    type:
+                      type: string
+                      enum: [ClusterIP, NodePort, LoadBalancer]
+                    port:
+                      type: integer
+                dataStorage:
+                  type: object
+                  properties:
+                    size:
+                      type: string
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: HA Enabled
+          type: boolean
+          jsonPath: .spec.ha.enabled
+        - name: Replicas
+          type: integer
+          jsonPath: .spec.ha.replicas
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp 

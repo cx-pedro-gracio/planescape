@@ -1,0 +1,69 @@
+---
+# Watches file for Helm-based operator
+# This defines which resources the operator watches and how to reconcile them
+
+- group: planescape.io
+  version: v1alpha1
+  kind: PlanescapeStack
+  chart: ../charts
+  reconcilePeriod: 5m
+  watchDependentResources: true
+  overrideValues:
+    # Override values based on the CR spec
+    postgresql.enabled: "spec.components.postgresql.enabled"
+    postgresql.auth.database: "spec.components.postgresql.auth.database"
+    postgresql.auth.username: "spec.components.postgresql.auth.username"
+    postgresql.primary.persistence.size: "spec.components.postgresql.primary.persistence.size"
+    postgresql.primary.resources: "spec.components.postgresql.primary.resources"
+    
+    jenkins.enabled: "spec.components.jenkins.enabled"
+    jenkins.controller.serviceType: "spec.components.jenkins.controller.serviceType"
+    jenkins.controller.persistence.size: "spec.components.jenkins.controller.persistence.size"
+    jenkins.controller.resources: "spec.components.jenkins.controller.resources"
+    jenkins.controller.installPlugins: "spec.components.jenkins.controller.installPlugins"
+    
+    vault.enabled: "spec.components.vault.enabled"
+    vault.server.ha.enabled: "spec.components.vault.server.ha.enabled"
+    vault.server.ha.replicas: "spec.components.vault.server.ha.replicas"
+    vault.server.resources: "spec.components.vault.server.resources"
+    vault.server.dataStorage.size: "spec.components.vault.server.dataStorage.size"
+  
+  # Health checks for components
+  health:
+    - name: "postgresql"
+      kind: "StatefulSet"
+      group: "apps"
+      version: "v1"
+      selector:
+        matchLabels:
+          app.kubernetes.io/component: "primary"
+          app.kubernetes.io/name: "postgresql"
+    - name: "jenkins"
+      kind: "Deployment"
+      group: "apps"
+      version: "v1"
+      selector:
+        matchLabels:
+          app.kubernetes.io/component: "jenkins-controller"
+    - name: "vault"
+      kind: "StatefulSet"
+      group: "apps"
+      version: "v1"
+      selector:
+        matchLabels:
+          app.kubernetes.io/name: "vault"
+
+- group: planescape.io
+  version: v1alpha1
+  kind: PlanescapeJob
+  chart: ../charts/job
+  reconcilePeriod: 1m
+  watchDependentResources: true
+  overrideValues:
+    job.name: "metadata.name"
+    job.namespace: "metadata.namespace"
+    job.schedule: "spec.schedule"
+    job.template: "spec.jobTemplate"
+    vault.enabled: "spec.vault.enabled"
+    vault.role: "spec.vault.role"
+    vault.path: "spec.vault.path" 

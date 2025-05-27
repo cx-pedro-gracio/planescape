@@ -1,0 +1,25 @@
+apiVersion: helm.sdk.operatorframework.io/v1
+kind: PlanescapeStack
+metadata:
+  name: my-stack
+spec:
+  # Helm chart reference
+  chart:
+    name: planescape
+    version: "0.1.0"
+    repo: "https://charts.planescape.io"
+  # Values that override the chart's defaults
+  values:
+    postgresql:
+      enabled: true
+      auth:
+        database: "myapp"
+    jenkins:
+      enabled: true
+    vault:
+      enabled: true
+  # Reconciliation behavior
+  reconcile:
+    interval: "5m"
+    timeout: "10m"
+    retryAfter: "1m" 

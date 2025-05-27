@@ -1,0 +1,54 @@
+apiVersion: planescape.io/v1alpha1
+kind: PlanescapeStack
+metadata:
+  name: demo-stack
+  namespace: planescape-system
+spec:
+  components:
+    postgresql:
+      enabled: true
+      auth:
+        database: postgres
+        # No explicit username/password - will be managed by Vault
+      primary:
+        persistence:
+          size: 8Gi
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        service:
+          type: ClusterIP
+          port: 5432
+    jenkins:
+      enabled: true
+      controller:
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        serviceType: ClusterIP
+        persistence:
+          size: 8Gi
+    vault:
+      enabled: true
+      server:
+        ha:
+          enabled: false
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        service:
+          type: ClusterIP
+        dataStorage:
+          size: 8Gi 

@@ -24,3 +24,19 @@ kubeconfig
 # Temporary files
 *.tmp
 *.temp 
+
+# .NET build artifacts
+**/bin/
+**/obj/
+*.user
+*.userosscache
+*.suo
+*.userprefs
+.vs/
+.vscode/
+*.swp
+*.*~
+project.lock.json
+.DS_Store
+*.pyc
+nupkg/ 

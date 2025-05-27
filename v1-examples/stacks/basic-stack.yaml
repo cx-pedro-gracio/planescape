@@ -1,0 +1,111 @@
+# Basic Planescape Stack Configuration
+# This example shows how to configure a basic stack using Helm values
+
+# PostgreSQL Configuration
+    postgresql:
+      enabled: true
+      auth:
+        database: "planescape"
+        username: "postgres"
+    # Password will be managed by Vault
+      primary:
+        persistence:
+      enabled: true
+          size: "8Gi"
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "512Mi"
+          limits:
+            cpu: "500m"
+            memory: "1Gi"
+        service:
+          type: ClusterIP
+          port: 5432
+    securityContext:
+      enabled: true
+      runAsUser: 1001
+      fsGroup: 1001
+
+# Jenkins Configuration
+    jenkins:
+      enabled: true
+      controller:
+        serviceType: ClusterIP
+        persistence:
+      enabled: true
+          size: "8Gi"
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "512Mi"
+          limits:
+            cpu: "500m"
+            memory: "1Gi"
+        installPlugins:
+          - "kubernetes:1.31.3"
+          - "workflow-aggregator:2.6"
+          - "git:4.11.0"
+          - "configuration-as-code:1.55"
+    securityContext:
+      enabled: true
+      runAsUser: 1000
+      fsGroup: 1000
+
+# Vault Configuration
+    vault:
+      enabled: true
+      server:
+        ha:
+          enabled: false
+          replicas: 1
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "512Mi"
+          limits:
+            cpu: "500m"
+            memory: "1Gi"
+        service:
+          type: ClusterIP
+        dataStorage:
+      enabled: true
+          size: "10Gi" 
+    securityContext:
+      enabled: true
+      runAsUser: 100
+      fsGroup: 100
+
+# Vault Integration
+vaultIntegration:
+  enabled: true
+  path: "planescape"
+  role: "planescape"
+  ttl: "1h"
+  maxTTL: "24h"
+
+# Network Policies
+networkPolicy:
+  enabled: true
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: planescape
+      ports:
+        - protocol: TCP
+          port: 5432  # PostgreSQL
+        - protocol: TCP
+          port: 8080  # Jenkins
+        - protocol: TCP
+          port: 8200  # Vault
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: planescape
+      ports:
+        - protocol: TCP
+          port: 8200  # Vault
+        - protocol: TCP
+          port: 9090  # Prometheus 

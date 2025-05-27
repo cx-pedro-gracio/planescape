@@ -1,0 +1,73 @@
+# Demo Job Configuration
+# This example shows how to configure a one-time job using Helm values
+
+job:
+  name: demo-job
+  namespace: planescape-system
+  labels:
+    stack.planescape.io/name: demo-stack
+  schedule: "@once"  # Run once immediately
+      template:
+        metadata:
+          annotations:
+            vault.hashicorp.com/agent-inject: "true"
+            vault.hashicorp.com/agent-inject-status: "update"
+            vault.hashicorp.com/role: "demo-stack-job-role"
+            vault.hashicorp.com/agent-inject-secret-db-creds: "database/creds/demo-stack-postgresql"
+            vault.hashicorp.com/agent-inject-template-db-creds: |
+              {{- with secret "database/creds/demo-stack-postgresql" -}}
+              username={{ .Data.username }}
+              password={{ .Data.password }}
+              {{- end -}}
+        spec:
+          containers:
+          - name: postgres
+            image: postgres:15-alpine
+            command: ["psql"]
+            args:
+            - "-h"
+            - "$(cat /vault/secrets/db-creds/host)"
+            - "-U"
+            - "$(cat /vault/secrets/db-creds/username)"
+            - "-d"
+            - "postgres"
+            - "-c"
+            - "SELECT version();"
+            env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: vault-db-creds
+                  key: password
+            resources:
+              requests:
+                cpu: "100m"
+                memory: "128Mi"
+              limits:
+                cpu: "200m"
+                memory: "256Mi"
+          restartPolicy: Never
+      # Service account will be created by the operator
+
+# Vault Integration
+vault:
+  enabled: true
+  role: demo-stack-job-role
+  path: database/creds/demo-stack-postgresql
+  ttl: 1h
+  maxTTL: 24h
+
+# Network Policy
+networkPolicy:
+  enabled: true
+  ingress: []  # No ingress needed for jobs
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              name: planescape
+      ports:
+        - protocol: TCP
+          port: 5432  # PostgreSQL
+        - protocol: TCP
+          port: 8200  # Vault 
