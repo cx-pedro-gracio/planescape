@@ -1,0 +1,19 @@
+# --- External Secrets Operator (ESO) configuration ---
+external-secrets:
+  installCRDs: true
+  leaderElect: true
+  webhook:
+    enabled: true
+    image:
+      repository: ghcr.io/external-secrets/external-secrets
+      tag: v0.17.0
+  serviceAccount:
+    create: true
+    name: external-secrets
+  image:
+    repository: ghcr.io/external-secrets/external-secrets
+    tag: v0.17.0
+  certController:
+    image:
+      repository: ghcr.io/external-secrets/external-secrets
+      tag: v0.17.0 

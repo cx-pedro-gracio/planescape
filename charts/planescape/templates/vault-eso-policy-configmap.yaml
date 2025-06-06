@@ -1,0 +1,9 @@
+# Vault: ConfigMap for ESO policy
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "planescape.fullname" . }}-vault-eso-policy
+  namespace: {{ .Release.Namespace }}
+data:
+  vault-eso-policy.hcl: |
+{{ .Files.Get "files/vault-eso-policy.hcl" | indent 4 }} 

@@ -1,0 +1,109 @@
+# --- PostgreSQL configuration (Bitnami chart) ---
+postgresql:
+  enabled: true
+  auth:
+    database: planescape
+    username: planescape
+    # Password is managed via ESO and Vault
+    existingSecret: planescape-postgres-admin
+    secretKeys:
+      adminPasswordKey: password
+  primary:
+    persistence:
+      enabled: true
+      size: 8Gi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# --- Jenkins configuration (official chart) ---
+jenkins:
+  enabled: true
+  controller:
+    serviceType: ClusterIP
+    persistence:
+      size: 8Gi
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+    installPlugins:
+      - workflow-job
+      - plain-credentials
+      - hashicorp-vault-plugin
+      - database-postgresql:1.5.0
+      - job-dsl
+    envVars:
+      - name: VAULT_ADDR
+        value: "http://{{ include \"planescape.fullname\" . }}-vault:8200"
+    additionalConfig:
+      - name: jenkins-jobdsl-scripts
+        mountPath: /var/jenkins_home/jobdsl
+    initScripts:
+      01-create-vault-credential.groovy: |-
+        import jenkins.model.*
+        import com.datapipe.jenkins.vault.credentials.common.VaultUsernamePasswordCredential
+        import com.cloudbees.plugins.credentials.CredentialsScope
+        import com.cloudbees.plugins.credentials.SystemCredentialsProvider
+
+        def credsId = "postgres-creds"
+        def existing = SystemCredentialsProvider.getInstance().getCredentials().find { it.id == credsId }
+        if (!existing) {
+          def vaultCred = new VaultUsernamePasswordCredential(
+            CredentialsScope.GLOBAL,
+            credsId,
+            "Postgres creds from Vault",
+            "secret/postgres", // Vault path
+            "username",
+            "password"
+          )
+          SystemCredentialsProvider.getInstance().getCredentials().add(vaultCred)
+          SystemCredentialsProvider.getInstance().save()
+        }
+      02-create-seed-job.groovy: |-
+        import jenkins.model.*
+        import javaposse.jobdsl.plugin.*
+        import hudson.model.*
+
+        def jobName = "SeedJob"
+        if (Jenkins.instance.getItem(jobName) == null) {
+          def job = Jenkins.instance.createProject(FreeStyleProject, jobName)
+          def dslScript = new File('/var/jenkins_home/jobdsl/log-to-postgres.groovy').text
+          job.buildersList.add(new javaposse.jobdsl.plugin.ExecuteDslScripts(
+            dslScripts: dslScript,
+            usingScriptText: true
+          ))
+          job.save()
+        }
+
+# --- Vault configuration (official chart) ---
+vault:
+  # Disable agent injector - we don't need sidecar injection
+  injector:
+    enabled: false
+  server:
+    ha:
+      enabled: false
+    resources:
+      requests:
+        cpu: 250m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+    dataStorage:
+      size: 10Gi
+    # Vault starts unsealed in dev mode for this demo
+    # In production, use proper seal/unseal procedures
+    dev:
+      enabled: true
+      devRootToken: "root"  # Fixed root token for development
+
+# --- End of values.yaml --- 

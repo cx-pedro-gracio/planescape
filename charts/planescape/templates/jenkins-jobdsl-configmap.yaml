@@ -1,0 +1,28 @@
+# Jenkins: ConfigMap containing Job DSL script to create a job that logs to Postgres using dynamic Vault credentials
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "planescape.fullname" . }}-jenkins-jobdsl-scripts
+  namespace: {{ .Release.Namespace }}
+data:
+  log-to-postgres.groovy: |
+    job('LogToPostgres') {
+      description('Logs a message and timestamp to the Postgres database')
+      wrappers {
+        vaultBuildWrapper {
+          vaultSecrets {
+            vaultUsernamePasswordCredential {
+              path('database/creds/jenkins-role')
+              usernameVariable('PGUSER')
+              passwordVariable('PGPASSWORD')
+            }
+          }
+        }
+      }
+      steps {
+        shell('''
+          TIMESTAMP=$(date +%s)
+          psql -h {{ include "planescape.fullname" . }}-postgresql -U $PGUSER -d planescape -c "INSERT INTO logs (message, timestamp) VALUES ('Hello from Jenkins', $TIMESTAMP);"
+        ''')
+      }
+    }

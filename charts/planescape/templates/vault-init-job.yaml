@@ -1,0 +1,75 @@
+# Vault: Job to configure the database secrets engine and Jenkins role using the Postgres admin password from ESO-synced secret
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "planescape.fullname" . }}-vault-init
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "1"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: vault-init
+      containers:
+        - name: vault-init
+          image: bitnami/kubectl:1.28.2
+          env:
+            - name: VAULT_ADDR
+              value: "http://{{ include "planescape.fullname" . }}-vault.{{ .Release.Namespace }}.svc.cluster.local:8200"
+            - name: VAULT_TOKEN
+              value: "root"
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Generate Jenkins admin credentials in Vault if they don't exist
+              if ! kubectl exec -n {{ .Release.Namespace }} {{ include "planescape.fullname" . }}-vault-0 -- vault kv get secret/planescape/jenkins >/dev/null 2>&1; then
+                JENKINS_USER=admin
+                JENKINS_PASS=$(openssl rand -base64 32)
+                kubectl exec -n {{ .Release.Namespace }} {{ include "planescape.fullname" . }}-vault-0 -- vault kv put secret/planescape/jenkins username="$JENKINS_USER" password="$JENKINS_PASS"
+              fi
+
+              # Generate Postgres admin password in Vault if it doesn't exist
+              if ! kubectl exec -n {{ .Release.Namespace }} {{ include "planescape.fullname" . }}-vault-0 -- vault kv get secret/planescape/postgres >/dev/null 2>&1; then
+                PW=$(openssl rand -base64 32)
+                kubectl exec -n {{ .Release.Namespace }} {{ include "planescape.fullname" . }}-vault-0 -- vault kv put secret/planescape/postgres password="$PW"
+              fi
+
+              # Wait for ESO to sync the password to the K8s Secret
+              for i in $(seq 1 30); do
+                kubectl get secret planescape-postgres-admin -n {{ .Release.Namespace }} && break
+                sleep 2
+              done
+
+              # Fetch Postgres admin password from Secret
+              export PGPASSWORD=$(kubectl get secret planescape-postgres-admin -n {{ .Release.Namespace }} -o jsonpath='{.data.password}' | base64 -d)
+
+              # Wait for Vault and Postgres to be up
+              for i in $(seq 1 30); do
+                kubectl get pods -l app.kubernetes.io/name=vault -n {{ .Release.Namespace }} | grep Running && \
+                kubectl get pods -l app.kubernetes.io/name=postgresql -n {{ .Release.Namespace }} | grep Running && break
+                sleep 2
+              done
+
+              # Enable the database secrets engine
+              kubectl exec -n {{ .Release.Namespace }} {{ include "planescape.fullname" . }}-vault-0 -- vault secrets enable -path=database database || true
+
+              # Configure the Postgres connection (admin user from Secret)
+              kubectl exec -n {{ .Release.Namespace }} {{ include "planescape.fullname" . }}-vault-0 -- vault write database/config/planescape \
+                plugin_name=postgresql-database-plugin \
+                allowed_roles="jenkins-role" \
+                connection_url="postgresql://planescape:$PGPASSWORD@{{ include "planescape.fullname" . }}-postgresql.{{ .Release.Namespace }}.svc.cluster.local:5432/planescape?sslmode=disable" \
+                username="planescape" \
+                password="$PGPASSWORD"
+
+              # Create a Vault role for Jenkins
+              kubectl exec -n {{ .Release.Namespace }} {{ include "planescape.fullname" . }}-vault-0 -- vault write database/roles/jenkins-role \
+                db_name=planescape \
+                creation_statements="CREATE ROLE '{{`{{name}}`}}' WITH LOGIN PASSWORD '{{`{{password}}`}}' VALID UNTIL '{{`{{expiration}}`}}'; GRANT ALL PRIVILEGES ON DATABASE planescape TO '{{`{{name}}`}}';" \
+                default_ttl="1h" \
+                max_ttl="24h"
+      # Add RBAC for the job to read secrets
+      automountServiceAccountToken: true

@@ -1,0 +1,47 @@
+# Vault: Job to load the ESO policy into Vault and update the ESO role to use it
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "planescape.fullname" . }}-vault-eso-policy
+  namespace: {{ .Release.Namespace }}
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "2"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: vault-init
+      containers:
+        - name: vault-eso-policy
+          image: hashicorp/vault:1.15.2
+          env:
+            - name: VAULT_ADDR
+              value: "http://{{ include "planescape.fullname" . }}-vault.{{ .Release.Namespace }}.svc.cluster.local:8200"
+            - name: VAULT_TOKEN
+              value: "root"
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Wait for Vault to be up
+              for i in $(seq 1 30); do
+                vault status && break
+                sleep 2
+              done
+              # Write the policy
+              vault policy write eso-policy /vault/userconfig/vault-eso-policy.hcl
+              # Update the role to use the new policy
+              vault write auth/kubernetes/role/eso \
+                bound_service_account_names=external-secrets \
+                bound_service_account_namespaces=external-secrets-system \
+                policies=eso-policy \
+                ttl=1h
+          volumeMounts:
+            - name: policy
+              mountPath: /vault/userconfig
+      volumes:
+        - name: policy
+          configMap:
+            name: {{ include "planescape.fullname" . }}-vault-eso-policy 
