@@ -17,3 +17,7 @@ external-secrets:
     image:
       repository: ghcr.io/external-secrets/external-secrets
       tag: v0.17.0 
+
+# --- Vault configuration for ESO ---
+vault:
+  token: "root"  # Default vault token for development - change this for production! 

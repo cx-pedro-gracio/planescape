@@ -1,0 +1,204 @@
+# PostgreSQL: Job to initialize database schema
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "planescape.fullname" . }}-postgres-init
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "planescape.labels" . | nindent 4 }}
+    component: postgres-setup
+spec:
+  template:
+    metadata:
+      labels:
+        {{- include "planescape.labels" . | nindent 8 }}
+        component: postgres-setup
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: vault-init
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999  # postgres user
+        fsGroup: 999
+      initContainers:
+        - name: wait-for-secret
+          image: bitnami/kubectl:1.28.2
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          command:
+            - /bin/bash
+            - -c
+            - |
+              echo "Waiting for services to be ready..."
+              
+              # Wait for PostgreSQL to be ready
+              for i in $(seq 1 120); do
+                if kubectl get pods -l app.kubernetes.io/name=postgresql -n {{ .Release.Namespace }} | grep Running >/dev/null 2>&1; then
+                  echo "PostgreSQL service is ready!"
+                  break
+                fi
+                echo "Waiting for PostgreSQL... ($i/120)"
+                sleep 5
+              done
+              
+              echo "Prerequisites are ready for database initialization"
+        - name: get-vault-password
+          image: hashicorp/vault:1.15.2
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          env:
+            - name: VAULT_ADDR
+              value: "http://{{ include "planescape.fullname" . }}-vault.{{ .Release.Namespace }}.svc.cluster.local:8200"
+            - name: VAULT_TOKEN
+              value: {{ .Values.planescape.vault.token | quote }}
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Getting PostgreSQL password from Vault..."
+              
+              # Wait for Vault to be ready
+              for i in $(seq 1 60); do
+                if vault status >/dev/null 2>&1; then
+                  echo "Vault is ready!"
+                  break
+                fi
+                echo "Waiting for Vault... ($i/60)"
+                sleep 3
+              done
+              
+              # Get password and save to shared volume
+              vault kv get -field=password secret/planescape/postgres > /shared/postgres-password
+              echo "Password retrieved and saved"
+          volumeMounts:
+            - name: shared-data
+              mountPath: /shared
+      containers:
+        - name: postgres-init
+          image: postgres:16
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false  # postgres needs to write temp files
+            runAsNonRoot: true
+            runAsUser: 999  # postgres user
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          env:
+            - name: PGHOST
+              value: "{{ include "planescape.fullname" . }}-postgresql.{{ .Release.Namespace }}.svc.cluster.local"
+            - name: PGPORT
+              value: "5432"
+            - name: PGDATABASE
+              value: {{ .Values.planescape.database.name | quote }}
+            - name: PGUSER
+              value: {{ .Values.planescape.database.user | quote }}
+            - name: VAULT_ADDR
+              value: "http://{{ include "planescape.fullname" . }}-vault.{{ .Release.Namespace }}.svc.cluster.local:8200"
+            - name: VAULT_TOKEN
+              value: {{ .Values.planescape.vault.token | quote }}
+          volumeMounts:
+            - name: shared-data
+              mountPath: /shared
+          command:
+            - /bin/bash
+            - -c
+            - |
+              echo "Starting database initialization and Vault configuration..."
+              
+              # Read password from shared volume
+              echo "Reading PostgreSQL password from shared volume..."
+              PGPASSWORD=$(cat /shared/postgres-password)
+              export PGPASSWORD
+              
+              # Install vault binary for database configuration
+              echo "Installing vault binary..."
+              curl -L https://releases.hashicorp.com/vault/1.15.2/vault_1.15.2_linux_amd64.zip > /tmp/vault.zip
+              cd /tmp && unzip vault.zip && chmod +x vault
+              export PATH="/tmp:$PATH"
+              
+              # Wait for PostgreSQL to accept connections
+              echo "Waiting for PostgreSQL to accept connections..."
+              for i in $(seq 1 60); do
+                if pg_isready -h $PGHOST -p $PGPORT -U $PGUSER >/dev/null 2>&1; then
+                  echo "PostgreSQL is ready!"
+                  break
+                fi
+                echo "Waiting for PostgreSQL connection... ($i/60)"
+                sleep 2
+              done
+              
+              if ! pg_isready -h $PGHOST -p $PGPORT -U $PGUSER >/dev/null 2>&1; then
+                echo "ERROR: PostgreSQL not accepting connections"
+                exit 1
+              fi
+              
+              # Create tables if they don't exist
+              echo "Creating database schema..."
+              psql -h $PGHOST -p $PGPORT -U $PGUSER -d $PGDATABASE -c "
+                CREATE TABLE IF NOT EXISTS logs (
+                  id SERIAL PRIMARY KEY,
+                  message TEXT NOT NULL,
+                  timestamp BIGINT NOT NULL,
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                
+                CREATE INDEX IF NOT EXISTS idx_logs_timestamp ON logs(timestamp);
+                CREATE INDEX IF NOT EXISTS idx_logs_created_at ON logs(created_at);
+              "
+              
+              # Configure Vault database engine
+              echo "Configuring Vault database connection..."
+              vault write database/config/planescape \
+                plugin_name=postgresql-database-plugin \
+                allowed_roles="jenkins-role" \
+                connection_url="postgresql://$PGUSER:$PGPASSWORD@$PGHOST:$PGPORT/$PGDATABASE?sslmode=disable" \
+                username="$PGUSER" \
+                password="$PGPASSWORD"
+
+              # Create Jenkins database role in Vault
+              echo "Creating Jenkins database role in Vault..."
+              vault write database/roles/jenkins-role \
+                db_name=planescape \
+                creation_statements="CREATE ROLE '{{`{{name}}`}}' WITH LOGIN PASSWORD '{{`{{password}}`}}' VALID UNTIL '{{`{{expiration}}`}}'; GRANT ALL PRIVILEGES ON DATABASE $PGDATABASE TO '{{`{{name}}`}}';" \
+                default_ttl="1h" \
+                max_ttl="24h"
+              
+              echo "Database schema initialization and Vault configuration completed successfully!"
+      volumes:
+        - name: shared-data
+          emptyDir: {}
+      automountServiceAccountToken: true 

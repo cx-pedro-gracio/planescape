@@ -6,23 +6,67 @@ metadata:
   namespace: {{ .Release.Namespace }}
 data:
   log-to-postgres.groovy: |
-    job('LogToPostgres') {
-      description('Logs a message and timestamp to the Postgres database')
-      wrappers {
-        vaultBuildWrapper {
-          vaultSecrets {
-            vaultUsernamePasswordCredential {
-              path('database/creds/jenkins-role')
-              usernameVariable('PGUSER')
-              passwordVariable('PGPASSWORD')
+    pipelineJob('LogToPostgres') {
+      description('Logs a message and timestamp to the Postgres database using dynamic Vault credentials')
+      triggers {
+        cron('H/5 * * * *') // every 5 minutes
+      }
+      definition {
+        cps {
+          script("""
+            pipeline {
+              agent any
+              stages {
+                stage('Log to Postgres') {
+                  steps {
+                    withVault([
+                      vaultUrl: 'http://planescape-vault:8200',
+                      vaultCredentialId: 'vault-token',
+                      skipSslVerification: true
+                    ]) {
+                      sh '''
+                        echo "=== Jenkins Job: Logging to PostgreSQL ==="
+                        echo "Job: \$JOB_NAME"
+                        echo "Build: \$BUILD_NUMBER"
+                        echo "Timestamp: \$(date)"
+                        PGHOST="planescape-postgresql"
+                        PGPORT="5432"
+                        PGDATABASE="planescape"
+                        echo "Connecting to PostgreSQL..."
+                        echo "Host: \$PGHOST"
+                        echo "User: \$PGUSER"
+                        echo "Database: \$PGDATABASE"
+                        if ! pg_isready -h \$PGHOST -p \$PGPORT -U \$PGUSER; then
+                          echo "ERROR: Cannot connect to PostgreSQL"
+                          exit 1
+                        fi
+                        TIMESTAMP=\$(date +%s)
+                        MESSAGE="Hello from Jenkins job \$JOB_NAME #\$BUILD_NUMBER at \$(date)"
+                        echo "Inserting log entry..."
+                        echo "Message: \$MESSAGE"
+                        echo "Timestamp: \$TIMESTAMP"
+                        psql -h \$PGHOST -p \$PGPORT -U \$PGUSER -d \$PGDATABASE -c "
+                          INSERT INTO logs (message, timestamp)
+                          VALUES ('\$MESSAGE', \$TIMESTAMP);"
+                      '''
+                    }
+                  }
+                }
+              }
             }
-          }
+          """)
+          sandbox(true)
         }
       }
-      steps {
-        shell('''
-          TIMESTAMP=$(date +%s)
-          psql -h {{ include "planescape.fullname" . }}-postgresql -U $PGUSER -d planescape -c "INSERT INTO logs (message, timestamp) VALUES ('Hello from Jenkins', $TIMESTAMP);"
-        ''')
+      
+      publishers {
+        // Archive the console output
+        archiveArtifacts {
+          pattern('**/console.log')
+          allowEmpty(true)
+        }
+        
+        // Send notifications (optional)
+        mailer('', false, false)
       }
     }

@@ -1,0 +1,105 @@
+{{- if .Values.planescape.security.enforceSecurityContexts }}
+# Network Policy: Vault access
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "planescape.fullname" . }}-vault-access
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "planescape.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: vault
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    # Allow access from Jenkins
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: jenkins
+    # Allow access from ESO (in external-secrets-system namespace)
+    - namespaceSelector:
+        matchLabels:
+          name: external-secrets-system
+    # Allow access from init jobs
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: planescape
+    ports:
+    - protocol: TCP
+      port: 8200
+  egress:
+  - {} # Allow all egress for now
+
+---
+# Network Policy: PostgreSQL access
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "planescape.fullname" . }}-postgresql-access
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "planescape.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: postgresql
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    # Allow access from Jenkins
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: jenkins
+    # Allow access from init jobs
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: planescape
+    ports:
+    - protocol: TCP
+      port: 5432
+
+---
+# Network Policy: Jenkins access
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "planescape.fullname" . }}-jenkins-access
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "planescape.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: jenkins
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from: []  # Allow from anywhere (can be restricted further)
+    ports:
+    - protocol: TCP
+      port: 8080
+  egress:
+  - to:
+    # Allow access to Vault
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: vault
+    ports:
+    - protocol: TCP
+      port: 8200
+  - to:
+    # Allow access to PostgreSQL
+    - podSelector:
+        matchLabels:
+          app.kubernetes.io/name: postgresql
+    ports:
+    - protocol: TCP
+      port: 5432
+  - {} # Allow DNS and other necessary egress
+{{- end }} 

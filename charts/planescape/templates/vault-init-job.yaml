@@ -4,72 +4,97 @@ kind: Job
 metadata:
   name: {{ include "planescape.fullname" . }}-vault-init
   namespace: {{ .Release.Namespace }}
-  annotations:
-    "helm.sh/hook": post-install,post-upgrade
-    "helm.sh/hook-weight": "1"
-    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+  labels:
+    {{- include "planescape.labels" . | nindent 4 }}
+    component: vault-setup
 spec:
   template:
+    metadata:
+      labels:
+        {{- include "planescape.labels" . | nindent 8 }}
+        component: vault-setup
     spec:
       restartPolicy: OnFailure
       serviceAccountName: vault-init
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
       containers:
         - name: vault-init
-          image: bitnami/kubectl:1.28.2
+          image: hashicorp/vault:1.15.2
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 1000
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
           env:
             - name: VAULT_ADDR
               value: "http://{{ include "planescape.fullname" . }}-vault.{{ .Release.Namespace }}.svc.cluster.local:8200"
             - name: VAULT_TOKEN
-              value: "root"
+              value: {{ .Values.planescape.vault.token | quote }}
           command:
             - /bin/sh
             - -c
             - |
+              echo "Starting Vault initialization..."
+              
+              # Wait for Vault to be ready
+              echo "Waiting for Vault to be ready..."
+              for i in $(seq 1 60); do
+                if vault status >/dev/null 2>&1; then
+                  echo "Vault is ready!"
+                  break
+                fi
+                echo "Waiting for Vault... ($i/60)"
+                sleep 3
+              done
+              
+              # Verify authentication
+              echo "Verifying Vault authentication..."
+              vault auth -method=token token=$VAULT_TOKEN >/dev/null 2>&1
+              
               # Generate Jenkins admin credentials in Vault if they don't exist
-              if ! kubectl exec -n {{ .Release.Namespace }} {{ include "planescape.fullname" . }}-vault-0 -- vault kv get secret/planescape/jenkins >/dev/null 2>&1; then
+              echo "Setting up Jenkins admin credentials..."
+              if ! vault kv get secret/planescape/jenkins >/dev/null 2>&1; then
                 JENKINS_USER=admin
-                JENKINS_PASS=$(openssl rand -base64 32)
-                kubectl exec -n {{ .Release.Namespace }} {{ include "planescape.fullname" . }}-vault-0 -- vault kv put secret/planescape/jenkins username="$JENKINS_USER" password="$JENKINS_PASS"
+                JENKINS_PASS=$(head -c 32 /dev/urandom | base64 | tr -d '=+/' | cut -c1-32)
+                vault kv put secret/planescape/jenkins username="$JENKINS_USER" password="$JENKINS_PASS"
+                echo "Jenkins admin credentials created"
+              else
+                echo "Jenkins admin credentials already exist"
               fi
 
-              # Generate Postgres admin password in Vault if it doesn't exist
-              if ! kubectl exec -n {{ .Release.Namespace }} {{ include "planescape.fullname" . }}-vault-0 -- vault kv get secret/planescape/postgres >/dev/null 2>&1; then
-                PW=$(openssl rand -base64 32)
-                kubectl exec -n {{ .Release.Namespace }} {{ include "planescape.fullname" . }}-vault-0 -- vault kv put secret/planescape/postgres password="$PW"
+              # Generate Postgres admin password from Secret
+              echo "Setting up PostgreSQL admin credentials..."
+              if ! vault kv get secret/planescape/postgres >/dev/null 2>&1; then
+                PW=$(head -c 32 /dev/urandom | base64 | tr -d '=+/' | cut -c1-32)
+                vault kv put secret/planescape/postgres username="planescape" password="$PW"
+                echo "PostgreSQL admin credentials created"
+              else
+                # Optionally: patch the secret if username is missing
+                if ! vault kv get -field=username secret/planescape/postgres >/dev/null 2>&1; then
+                  vault kv patch secret/planescape/postgres username="planescape"
+                  echo "Patched missing username in existing secret"
+                else
+                  echo "PostgreSQL admin credentials already exist"
+                fi
               fi
-
-              # Wait for ESO to sync the password to the K8s Secret
-              for i in $(seq 1 30); do
-                kubectl get secret planescape-postgres-admin -n {{ .Release.Namespace }} && break
-                sleep 2
-              done
-
-              # Fetch Postgres admin password from Secret
-              export PGPASSWORD=$(kubectl get secret planescape-postgres-admin -n {{ .Release.Namespace }} -o jsonpath='{.data.password}' | base64 -d)
-
-              # Wait for Vault and Postgres to be up
-              for i in $(seq 1 30); do
-                kubectl get pods -l app.kubernetes.io/name=vault -n {{ .Release.Namespace }} | grep Running && \
-                kubectl get pods -l app.kubernetes.io/name=postgresql -n {{ .Release.Namespace }} | grep Running && break
-                sleep 2
-              done
 
               # Enable the database secrets engine
-              kubectl exec -n {{ .Release.Namespace }} {{ include "planescape.fullname" . }}-vault-0 -- vault secrets enable -path=database database || true
+              echo "Enabling database secrets engine..."
+              vault secrets enable -path=database database 2>/dev/null || echo "Database engine already enabled"
 
-              # Configure the Postgres connection (admin user from Secret)
-              kubectl exec -n {{ .Release.Namespace }} {{ include "planescape.fullname" . }}-vault-0 -- vault write database/config/planescape \
-                plugin_name=postgresql-database-plugin \
-                allowed_roles="jenkins-role" \
-                connection_url="postgresql://planescape:$PGPASSWORD@{{ include "planescape.fullname" . }}-postgresql.{{ .Release.Namespace }}.svc.cluster.local:5432/planescape?sslmode=disable" \
-                username="planescape" \
-                password="$PGPASSWORD"
-
-              # Create a Vault role for Jenkins
-              kubectl exec -n {{ .Release.Namespace }} {{ include "planescape.fullname" . }}-vault-0 -- vault write database/roles/jenkins-role \
-                db_name=planescape \
-                creation_statements="CREATE ROLE '{{`{{name}}`}}' WITH LOGIN PASSWORD '{{`{{password}}`}}' VALID UNTIL '{{`{{expiration}}`}}'; GRANT ALL PRIVILEGES ON DATABASE planescape TO '{{`{{name}}`}}';" \
-                default_ttl="1h" \
-                max_ttl="24h"
+              echo "Vault initialization completed successfully!"
       # Add RBAC for the job to read secrets
       automountServiceAccountToken: true

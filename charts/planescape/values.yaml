@@ -12,6 +12,30 @@ postgresql:
     persistence:
       enabled: true
       size: 8Gi
+    extraInitContainers: |
+      - name: wait-for-postgres-secret
+        image: bitnami/kubectl:1.28.2
+        command:
+          - /bin/sh
+          - -c
+          - |
+            for i in $(seq 1 60); do
+              if kubectl get secret planescape-postgres-admin -n $(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace) >/dev/null 2>&1; then
+                echo "Secret planescape-postgres-admin found!"
+                exit 0
+              fi
+              echo "Waiting for secret planescape-postgres-admin... ($i/60)"
+              sleep 5
+            done
+            echo "ERROR: Secret planescape-postgres-admin not found after waiting."
+            exit 1
+        resources:
+          requests:
+            cpu: 10m
+            memory: 16Mi
+          limits:
+            cpu: 50m
+            memory: 32Mi
   resources:
     requests:
       cpu: 250m
@@ -26,7 +50,13 @@ jenkins:
   controller:
     serviceType: ClusterIP
     persistence:
+      enabled: true
       size: 8Gi
+    admin:
+      # Use admin credentials from ESO-managed secret
+      existingSecret: planescape-jenkins-admin
+      userKey: jenkins-admin-user
+      passwordKey: jenkins-admin-password
     resources:
       requests:
         cpu: 250m
@@ -37,51 +67,55 @@ jenkins:
     installPlugins:
       - workflow-job
       - plain-credentials
+      - build-user-vars-plugin
       - hashicorp-vault-plugin
-      - database-postgresql:1.5.0
       - job-dsl
-    envVars:
-      - name: VAULT_ADDR
-        value: "http://{{ include \"planescape.fullname\" . }}-vault:8200"
-    additionalConfig:
-      - name: jenkins-jobdsl-scripts
-        mountPath: /var/jenkins_home/jobdsl
+    JCasC:
+      configScripts:
+        vault-config: |
+          jenkins:
+            systemMessage: "Planescape Jenkins - PostgreSQL, Vault, and Job DSL Integration Ready"
+            unclassified:
+              hashicorpVault:
+                vaultUrl: "http://planescape-vault:8200"
+                vaultCredentialId: "" # Use VAULT_TOKEN from environment
+                engineVersion: 2
+                failIfNotFound: true
+                skipSslVerification: true
     initScripts:
-      01-create-vault-credential.groovy: |-
-        import jenkins.model.*
-        import com.datapipe.jenkins.vault.credentials.common.VaultUsernamePasswordCredential
-        import com.cloudbees.plugins.credentials.CredentialsScope
-        import com.cloudbees.plugins.credentials.SystemCredentialsProvider
-
-        def credsId = "postgres-creds"
-        def existing = SystemCredentialsProvider.getInstance().getCredentials().find { it.id == credsId }
-        if (!existing) {
-          def vaultCred = new VaultUsernamePasswordCredential(
-            CredentialsScope.GLOBAL,
-            credsId,
-            "Postgres creds from Vault",
-            "secret/postgres", // Vault path
-            "username",
-            "password"
-          )
-          SystemCredentialsProvider.getInstance().getCredentials().add(vaultCred)
-          SystemCredentialsProvider.getInstance().save()
-        }
       02-create-seed-job.groovy: |-
         import jenkins.model.*
         import javaposse.jobdsl.plugin.*
         import hudson.model.*
 
         def jobName = "SeedJob"
-        if (Jenkins.instance.getItem(jobName) == null) {
-          def job = Jenkins.instance.createProject(FreeStyleProject, jobName)
-          def dslScript = new File('/var/jenkins_home/jobdsl/log-to-postgres.groovy').text
-          job.buildersList.add(new javaposse.jobdsl.plugin.ExecuteDslScripts(
-            dslScripts: dslScript,
-            usingScriptText: true
-          ))
-          job.save()
+        def jenkins = Jenkins.instance
+        
+        // Delete existing SeedJob if it exists to force recreation with updated DSL
+        def existingJob = jenkins.getItem(jobName)
+        if (existingJob != null) {
+          println "Deleting existing SeedJob to recreate with updated DSL script..."
+          existingJob.delete()
+          println "Existing SeedJob deleted"
         }
+        
+        println "Creating SeedJob..."
+        
+        def job = jenkins.createProject(FreeStyleProject, jobName)
+        job.setDescription("Seed job to create other jobs using Job DSL")
+        
+        // Trigger the seed job to create other jobs
+        job.scheduleBuild(0, new hudson.model.Cause.UserIdCause())
+        println "SeedJob triggered for execution"
+    agent:
+      enabled: true
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 256Mi
 
 # --- Vault configuration (official chart) ---
 vault:
@@ -104,6 +138,25 @@ vault:
     # In production, use proper seal/unseal procedures
     dev:
       enabled: true
-      devRootToken: "root"  # Fixed root token for development
+      devRootToken: "root"  # WARNING: Development only! Change for production
+
+# --- Planescape Configuration ---
+planescape:
+  # Vault authentication configuration
+  vault:
+    # WARNING: Only for development! Use Kubernetes auth in production
+    token: "root"
+    
+  # Database configuration
+  database:
+    name: "planescape"
+    user: "planescape"
+    
+  # Security settings
+  security:
+    # Set to true to enable enhanced security contexts
+    enforceSecurityContexts: true
+    # Set to true to enforce read-only root filesystem where possible
+    readOnlyRootFilesystem: true
 
 # --- End of values.yaml --- 
